@@ -1,0 +1,25 @@
+stacks:
+  - content-api
+regions:
+  - eu-west-1
+deployments:
+  twitter-cache-clearing:
+    type: aws-lambda
+    parameters:
+      bucket: content-api-dist
+      fileName: twitter-cache-clearing.jar
+      functions:
+        PROD:
+          name: twitterCacheClearing-PROD
+          filename: social-cache-clearing.jar
+    dependencies:
+      - cfn
+
+  cfn:
+    type: cloud-formation
+    parameters:
+      prependStackToCloudFormationStackName: false
+      appendStageToCloudFormationStackName: false
+      cloudFormationStackName: twitter-cache-clearing
+      cloudFormationStackByTags: false
+      templatePath: cfn.yaml

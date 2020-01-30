@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Cache-clearing from Twitter for recently updated Guardian content
+
+Parameters:
+  KinesisStream:
+    Description: Name of the crier kinesis stream
+    Type: String
+
+Resources:
+  Lambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: twitterCacheClearing-PROD
+      Description: Clears content from the Twitter cache when content is updated
+      Runtime: java8
+      Handler: com.gu.socialCacheClearing.ProductionLambda::handleRequest
+      MemorySize: 1024
+      Timeout: 15
+      Events:
+        Stream:
+          Type: Kinesis
+          Properties:
+            Stream: !Sub arn:aws:kinesis:${AWS::Region}:${AWS::AccountId}:stream/${KinesisStream}
+            StartingPosition: LATEST
+      CodeUri:
+        Bucket: content-api-dist
+        Key: content-api/PROD/twitter-cache-clearing/twitter-cache-clearing.jar
+      Policies:
+        - AWSLambdaBasicExecutionRole # Managed Policy that includes CloudWatch log permissions
+        - AWSLambdaKinesisExecutionRole
+        - Statement:
+            Effect: Allow
+            Action:
+              - ssm:GetParameter*
+            Resource:
+              - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/twitter-cache-clearing/*
+        - Statement:
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+            Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/c8e1f268-d291-46ec-aa96-a6b049298303
