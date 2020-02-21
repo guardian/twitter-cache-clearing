@@ -1,7 +1,35 @@
 package com.gu.socialCacheClearing
 
-trait Logger[F[_]] {
-  def logMessage(message: String): F[Unit]
+import com.danielasfregola.twitter4s.RefreshResponse
+
+import scala.concurrent.{ExecutionContext, Future}
+import com.gu.crier.model.event.v1.Event
+
+trait Logger[F[_], CapiEvent] {
+  def logCapiEvents(events: List[CapiEvent]): F[Unit]
+  def logRecentlyUpdatedIds(recentlyUpdatedIds: List[Id]): F[Unit]
+  def logSharedUrls(sharedURLs: List[String]): F[Unit]
+  def logRefreshResponses(responses: Set[RefreshResponse]): F[Unit]
 }
 
-case class Transition[F](logMessages: List[String])
+object Logger {
+  class ProductionLogger()(implicit ec: ExecutionContext) extends Logger[Future, Event] {
+
+    def logCapiEvents(events: List[Event]) = Future {
+      println(s"capiEvents: $events")
+    }
+
+    def logRecentlyUpdatedIds(recentlyUpdatedIds: List[Id]) = Future {
+      println(s"recentlyUpdatedIds: $recentlyUpdatedIds")
+    }
+
+    def logSharedUrls(sharedURLs: List[String]) = Future {
+      println(s"sharedUrls: $sharedURLs")
+    }
+
+    def logRefreshResponses(responses: Set[RefreshResponse]) = Future {
+      println(s"twitterRefreshResponses: $responses")
+    }
+  }
+}
+

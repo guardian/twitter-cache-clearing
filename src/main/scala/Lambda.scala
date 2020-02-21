@@ -4,152 +4,124 @@ import com.amazonaws.services.lambda.runtime.{Context, RequestHandler}
 import com.amazonaws.services.lambda.runtime.events.KinesisEvent
 import com.danielasfregola.twitter4s.{RefreshResponse, TwitterRefreshClient}
 import com.gu.contentapi.client.GuardianContentClient
-import com.gu.socialCacheClearing.Twitter.Production.{
-  accessToken,
-  consumerToken
-}
+import com.gu.socialCacheClearing.Monad.{MonadFuture, MonadIdentity}
+import com.gu.socialCacheClearing.Twitter.Production.{accessToken, consumerToken}
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext.global
+import com.gu.crier.model.event.v1.Event
+import com.gu.socialCacheClearing
 
-abstract class Lambda {
+import scala.concurrent.Future
 
-  type Event
 
-  def program[F[_], CapiEvent](event: Event)(
-      implicit f: Monad[F],
-      k: Kinesis[Event, CapiEvent],
-      c: Capi[F, CapiEvent],
-      o: Ophan[F],
-      t: Twitter[F]
-      //, l: Logger[F]
-  ): F[Set[RefreshResponse]] = {
+abstract class Lambda[F[_], Event, CapiEvent](
+  implicit f: Monad[F],
+  k: Kinesis[Event, CapiEvent],
+  c: Capi[F, CapiEvent],
+  o: Ophan[F],
+  t: Twitter[F],
+  l: Logger[F, CapiEvent]
+) {
+  def program(event: Event): F[Set[RefreshResponse]] = {
 
     val capiEvents = capiEventsFromKinesisEvent(event)
 
     sealed trait TwitterServiceResponse
     case object TwitterServiceNotCalled extends TwitterServiceResponse
-    case class  TwitterServiceRefreshResponse(response: Set[RefreshResponse])
-
-    def  refreshResponseForRecentIds2(recentUpdateIds: ::[Id]): F[Set[RefreshResponse]] = {
-      sharedUrlsForContentIds(recentUpdateIds).map(_.toList).flatMap {
-        case Nil              => f.pure(Set.empty[RefreshResponse])
-        case urls: ::[String] => refreshRequestForSharedUrls(urls.toSet)
-      }
-    }
+    case class TwitterServiceRefreshResponse(response: Set[RefreshResponse])
 
     def refreshResponseForRecentIds(
-        recentUpdateIds: ::[Id]): F[Set[RefreshResponse]] = {
-      sharedUrlsForContentIds(recentUpdateIds).map(_.toList).flatMap {
-        case Nil              => f.pure(Set.empty[RefreshResponse])
-        case urls: ::[String] => refreshRequestForSharedUrls(urls.toSet)
-      }
+      recentUpdateIds: ::[Id]): F[Set[RefreshResponse]] = {
+      for {
+        urls <- sharedUrlsForContentIds(recentUpdateIds).map(_.toList)
+        _ <- l.logSharedUrls(urls)
+        res <- urls match {
+          case Nil => f.pure(Set.empty[RefreshResponse])
+          case urls: ::[String] => refreshRequestForSharedUrls(urls.toSet)
+        }
+      } yield res
     }
 
     def refreshResponseForIds(ids: ::[Id])(
-        implicit f: Monad[F]): F[Set[RefreshResponse]] = {
-      recentUpdates(ids)
-        .flatMap {
-        case Nil             => f.pure(Set.empty[RefreshResponse])
-        case someIds: ::[Id] => refreshResponseForRecentIds(someIds)
-      }
+      implicit f: Monad[F]): F[Set[RefreshResponse]] = {
+      for {
+        recentUpdates <- recentUpdates(ids)
+        _ <- l.logRecentlyUpdatedIds(recentUpdates)
+        res <- recentUpdates match {
+          case Nil => f.pure(Set.empty[RefreshResponse])
+          case someIds: ::[Id] => refreshResponseForRecentIds(someIds)
+        }
+      } yield res
     }
 
     // could we use a different effect which means we don't need to match on Nil each time?
     // cats? ZIO?
+    l.logCapiEvents(capiEvents).flatMap { _ =>
     contentIdsForCapiEvents(capiEvents) match {
-      case Nil                => f.pure(Set.empty)
+      case Nil => f.pure(Set.empty)
       case contentIds: ::[Id] => refreshResponseForIds(contentIds)
     }
   }
+  }
 
-  def capiEventsFromKinesisEvent[Event, CapiEvent](event: Event)(
+  def capiEventsFromKinesisEvent(event: Event)(
       implicit kinesis: Kinesis[Event, CapiEvent]): List[CapiEvent] = {
     kinesis.capiEvents(event)
   }
 
   //TODO: we're defining type F[_] but we don't use it
-  def contentIdsForCapiEvents[CapiEvent, F[_]](events: List[CapiEvent])(
+  def contentIdsForCapiEvents(events: List[CapiEvent])(
       implicit capi: Capi[F, CapiEvent]): List[Id] = {
     capi.eventsToIds(events)
   }
 
-  def recentUpdates[F[_]](ids: ::[Id])(
+  def recentUpdates(ids: ::[Id])(
       implicit capi: Capi[F, _]): F[List[Id]] = {
     capi.idsToRecentlyUpdatedIds(ids)
   }
 
-  def sharedUrlsForContentIds[F[_]](contentIds: ::[Id])(
+  def sharedUrlsForContentIds(contentIds: ::[Id])(
       implicit ophan: Ophan[F]): F[SharedURLs] = {
     ophan.idsToSharedUrls(contentIds)
   }
 
-  def refreshRequestForSharedUrls[F[_]](sharedUrls: SharedURLs)(
+  def refreshRequestForSharedUrls(sharedUrls: SharedURLs)(
       implicit twitter: Twitter[F]): F[Set[RefreshResponse]] = {
-    twitter.refreshSharedUrls(sharedUrls)
+    for {
+      responses <- twitter.refreshSharedUrls(sharedUrls)
+      _ <- l.logRefreshResponses(responses)
+    } yield {
+      responses
+    }
   }
 
-  implicit class FlatMapSyntax[F[_], A](private val fa: F[A])(
-      implicit x: Monad[F]) {
-    def flatMap[B](f: A => F[B]): F[B] = x.flatMap(fa)(f)
-    def map[B](f: A => B): F[B] = x.map(fa)(f)
-  }
-
 }
 
-//TODO: Use Cats?
-trait Monad[F[_]] {
-  def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B]
-  def map[A, B](fa: F[A])(f: A => B): F[B]
-  def pure[A](a: A): F[A]
-}
-
-class FlatMapFuture(ec: ExecutionContext) extends Monad[Future] {
-  override def flatMap[A, B](fa: Future[A])(f: A => Future[B]): Future[B] =
-    fa.flatMap(f)(ec)
-  override def map[A, B](fa: Future[A])(f: A => B): Future[B] = fa.map(f)(ec)
-  def pure[A](a: A): Future[A] = Future.successful(a)
-}
-
-class ProductionLambda extends Lambda with RequestHandler[KinesisEvent, Unit] {
-  type Event = KinesisEvent
-
-  val capiClient = new GuardianContentClient(
-    Credentials.getCredential("capi-api-key"))
-  val ec = scala.concurrent.ExecutionContext.Implicits.global
-
-  implicit val flatMapFuture = new FlatMapFuture(ec)
-
-  implicit val kinesis = Kinesis.Production
-
-  implicit val capi = new Capi.Production(capiClient)(ec)
-
-  implicit val ophan = new Ophan.Production
-
-  val twitterClient = new TwitterRefreshClient(consumerToken, accessToken)
-  implicit val twitter = new Twitter.Production(twitterClient)
+class ProductionLambda extends Lambda[Future, KinesisEvent, Event]()(
+  new MonadFuture(global),
+  Kinesis.Production,
+  new Capi.Production(ProductionLambda.capiClient)(global),
+  new Ophan.Production,
+  new Twitter.Production(ProductionLambda.twitterClient),
+  new socialCacheClearing.Logger.ProductionLogger()(global)
+) with RequestHandler[KinesisEvent, Unit] {
 
   override def handleRequest(event: KinesisEvent, context: Context): Unit =
     program(event)
-
 }
 
-class TestLambda extends Lambda {
-  type Event = List[String]
+object ProductionLambda {
+  val capiClient = new GuardianContentClient(Credentials.getCredential("capi-api-key"))
+  val twitterClient = new TwitterRefreshClient(consumerToken, accessToken)
+}
 
-  class MonadIdentity extends Monad[Identity] {
-    override def flatMap[A, B](ia: Identity[A])(
-        f: A => Identity[B]): Identity[B] = f(ia)
-    override def map[A, B](ia: Identity[A])(f: A => B): Identity[B] = f(ia)
-    def pure[A](a: A): Identity[A] = a
-  }
 
-  implicit val monadIdentity = new MonadIdentity
-
-  implicit val kinesis = new Kinesis[Event, String] {
-    def capiEvents(event: Event): List[String] = event
-  }
-
-  implicit val capi = new Capi[Identity, String] {
+class TestLambda extends Lambda[Identity, List[String], String]()(
+  new MonadIdentity,
+  new Kinesis[List[String], String] {
+    def capiEvents(event: List[String]): List[String] = event
+  },
+  new Capi[Identity, String] {
     def eventToId: PartialFunction[String, String] = {
       case e => e
     }
@@ -157,19 +129,23 @@ class TestLambda extends Lambda {
     def idsToRecentlyUpdatedIds(ids: ::[String]): Identity[List[String]] = {
       ids.filter(_.startsWith("recent"))
     }
-  }
-
-  implicit val ophan = new Ophan[Identity] {
+  },
+  new Ophan[Identity] {
     def idsToSharedUrls(ids: ::[String]): Identity[Set[String]] = {
       val base = "www.theguardian.com/"
       ids.map(id => s"${base + id}?cmp=x").toSet
     }
-  }
-
-  implicit val twitter = new Twitter[Identity] {
+  },
+  new Twitter[Identity] {
     def refreshSharedUrls(urls: SharedURLs): Identity[Set[RefreshResponse]] =
       urls.map(_ => RefreshResponse("200"))
+  },
+  new Logger[Identity, String] {
+    def logCapiEvents(events: List[String]): Identity[Unit] = println(s"capiEvents: $events")
+    def logRecentlyUpdatedIds(recentlyUpdatedIds: List[String]) = println(s"recentlyUpdatedIds: $recentlyUpdatedIds")
+    def logSharedUrls(sharedURLs: List[String]) = println(s"sharedUrls: $sharedURLs")
+    def logRefreshResponses(responses: Set[RefreshResponse])= println(s"twitterRefreshResponses: $responses")
   }
-
-  def run(event: Event): Identity[Set[RefreshResponse]] = program(event)
+) {
+  def run(event: List[String]): Identity[Set[RefreshResponse]] = program(event)
 }

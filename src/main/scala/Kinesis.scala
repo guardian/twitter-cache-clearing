@@ -26,5 +26,4 @@ object Kinesis {
       } yield event).toList
     }
   }
-
 }
