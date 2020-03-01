@@ -34,7 +34,7 @@ Resources:
             Action:
               - ssm:GetParameter*
             Resource:
-              - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/twitter-cache-clearing/*
+              - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/social-cache-clearing/*
         - Statement:
             Effect: Allow
             Action:
