@@ -13,15 +13,15 @@ object Monad {
     def raise[A](e: E): F[A]
   }
 
-  class MonadFutureException(ec: ExecutionContext) extends MonadFException[Exception, Future] {
-    def raise[A](e: Exception): Future[A] = Future.failed(e)
+  class MonadFutureException(ec: ExecutionContext) extends MonadFException[Throwable, Future] {
+    def raise[A](e: Throwable): Future[A] = Future.failed(e)
     def pure[A](a: A): Future[A] = Future.successful(a)
     def map[A, B](fa: Future[A])(f: A => B): Future[B] = fa.map(f)(ec)
     def flatMap[A, B](fa: Future[A])(f: A => Future[B]): Future[B] = fa.flatMap(f)(ec)
   }
 
-  class MonadTryException extends MonadFException[Exception, Try] {
-    def raise[A](e: Exception): Try[A] = Failure(e)
+  class MonadTryException extends MonadFException[Throwable, Try] {
+    def raise[A](e: Throwable): Try[A] = Failure(e)
     def flatMap[A, B](ia: Try[A])(f: A => Try[B]): Try[B] = ia.flatMap(f)
     def map[A, B](ia: Try[A])(f: A => B): Try[B] = ia.map(f)
     def pure[A](a: A): Try[A] = Success(a)

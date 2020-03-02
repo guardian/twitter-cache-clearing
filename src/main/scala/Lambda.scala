@@ -14,7 +14,7 @@ import com.gu.socialCacheClearing
 import scala.concurrent.{Await, Future, duration}
 
 abstract class Lambda[F[_], Event, CapiEvent](
-    implicit f: MonadFException[Exception, F],
+    implicit f: MonadFException[Throwable, F],
     k: Kinesis[Event, CapiEvent],
     c: Capi[F, CapiEvent],
     o: Ophan[F],
