@@ -11,7 +11,7 @@ import scala.concurrent.ExecutionContext.global
 import com.gu.crier.model.event.v1.Event
 import com.gu.socialCacheClearing
 
-import scala.concurrent.Future
+import scala.concurrent.{Await, Future, duration}
 
 abstract class Lambda[F[_], Event, CapiEvent](
     implicit f: MonadFException[Exception, F],
@@ -97,7 +97,7 @@ class ProductionLambda
     with RequestHandler[KinesisEvent, Unit] {
 
   override def handleRequest(event: KinesisEvent, context: Context): Unit =
-    program(event)
+    Await.result(program(event), duration.Duration.Inf)
 }
 
 object ProductionLambda {
