@@ -97,7 +97,7 @@ class ProductionLambda
     with RequestHandler[KinesisEvent, Unit] {
 
   override def handleRequest(event: KinesisEvent, context: Context): Unit =
-    Await.result(program(event), duration.Duration.Inf)
+    Await.result(program(event), duration.Duration(context.getRemainingTimeInMillis, duration.MILLISECONDS))
 }
 
 object ProductionLambda {
