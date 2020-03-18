@@ -36,7 +36,7 @@ class TestLambda
     },
     new Logger[Try, String] {
       def logCapiEvents(events: List[String]): Try[Unit] =
-        Try(println(s"capiEvents: $events"))
+        Try(println(s"capiEvents: $events")) //TODO: Log something less verbose - a count?
       def logContentIdsForCapiEvents(ids: List[String]) =
         Try(println(s"ids: $ids"))
       def logRecentlyUpdatedIds(recentlyUpdatedIds: List[String]) =

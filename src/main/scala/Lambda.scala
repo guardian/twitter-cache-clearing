@@ -8,11 +8,12 @@ import com.gu.socialCacheClearing.Monad.{MonadFException, MonadFutureException}
 import com.gu.socialCacheClearing.Twitter.Production.{accessToken, consumerToken}
 
 import scala.concurrent.ExecutionContext.global
-import com.gu.crier.model.event.v1.Event
+import com.gu.crier.model.event.v1.{Event, EventType, ItemType}
 import com.gu.socialCacheClearing
 
 import scala.concurrent.{Await, Future, duration}
 
+// test change for git hook test
 abstract class Lambda[F[_], Event, CapiEvent](
     implicit f: MonadFException[Throwable, F],
     k: Kinesis[Event, CapiEvent],
@@ -85,6 +86,23 @@ abstract class Lambda[F[_], Event, CapiEvent](
 
 }
 
+
+object StagingLambda extends Lambda[Future, List[String], Event]()(
+  new MonadFutureException(global),
+  new Kinesis[List[String], Event] {
+    def capiEvents(event: List[String]): List[Event] = List(Event("id", EventType.RetrievableUpdate, ItemType.Content, System.currentTimeMillis(), None))
+  },
+  new Capi.Production(ProductionLambda.capiClient)(global),
+  new Ophan.Production,
+  new Twitter.Production(ProductionLambda.twitterClient),
+  new socialCacheClearing.Logger.ProductionLogger()(global)
+) with App {
+
+  val res = Await.result(program(List.empty), duration.Duration.Inf)
+
+  println(s"res: $res")
+}
+
 class ProductionLambda
     extends Lambda[Future, KinesisEvent, Event]()(
       new MonadFutureException(global),
@@ -97,7 +115,11 @@ class ProductionLambda
     with RequestHandler[KinesisEvent, Unit] {
 
   override def handleRequest(event: KinesisEvent, context: Context): Unit =
-    Await.result(program(event), duration.Duration(context.getRemainingTimeInMillis, duration.MILLISECONDS))
+  {
+    val res = Await.result(program(event), duration.Duration(context.getRemainingTimeInMillis, duration.MILLISECONDS))
+    println(res)
+  }
+
 }
 
 object ProductionLambda {
